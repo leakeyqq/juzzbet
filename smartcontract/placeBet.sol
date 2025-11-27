@@ -13,32 +13,20 @@ contract PlaceBet is CreateMarket {
     // Events
     event BetPlaced(uint256 indexed marketId, address indexed bettor, uint256 amount, bool isYesBet, uint256 timestamp);
 
-    function placeBet(
-        uint256 marketID,
-        uint256 amount,
-        bool yesBet
-    ) external nonReentrant returns (bool) {
-        // Validate market exists
+    function placeBet( uint256 marketID, uint256 amount, bool yesBet ) external nonReentrant returns (bool) {
         require(marketID < marketCount, "Market does not exist");
-
         Market storage market = markets[marketID];
 
         // Validate market state
         require(!market.isResolved, "Market is already resolved");
-        require(
-            market.outcome == Outcome.Pending,
-            "Market outcome already determined"
-        );
+        require( market.outcome == Outcome.Pending, "Market outcome already determined" );
         require(amount > 0, "Bet amount must be greater than 0");
 
         IERC20Metadata erc20 = IERC20Metadata(market.token);
 
         // Transfer tokens from bettor to contract
         require(erc20.balanceOf(msg.sender) >= amount, "Insufficient balance");
-        require(
-            erc20.allowance(msg.sender, address(this)) >= amount,
-            "Insufficient allowance"
-        );
+        require(erc20.allowance(msg.sender, address(this)) >= amount,"Insufficient allowance");
 
         erc20.safeTransferFrom(msg.sender, address(this), amount);
 

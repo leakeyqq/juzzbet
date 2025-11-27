@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 using SafeERC20 for IERC20Metadata;
 
-contract CreateMarket is ReentrancyGuard, ManageCurrencies  {
+contract CreateMarket is ReentrancyGuard, ManageCurrencies {
     constructor(address initialOwner) ManageCurrencies(initialOwner) {}
 
     struct Bet {
@@ -36,22 +36,26 @@ contract CreateMarket is ReentrancyGuard, ManageCurrencies  {
     mapping(uint256 => Market) public markets;
     uint256 public marketCount;
 
-    event MarketCreated(uint256 indexed marketId, address indexed creator, address token);
+    event MarketCreated(
+        uint256 indexed marketId,
+        address indexed creator,
+        address indexed token
+    );
 
-
-    function createMarket(address token) external onlyOwner nonReentrant returns (uint256) {
-                // Check if the token is supported
-        require(supportedCurrencies[token], "Token is not supported");
+    function createMarket(
+        address token
+    ) external nonReentrant returns (uint256) {
+        // Check if the token is supported
         require(token != address(0), "Invalid token address");
-        
+        require(supportedCurrencies[token], "Token is not supported");
+
         uint256 marketId = marketCount;
 
-        Market storage newMarket = markets[marketId];
-        newMarket.id = marketId;
-        newMarket.marketCreator = msg.sender;
-        newMarket.token = token;
-        newMarket.isResolved = false;
-        newMarket.outcome = Outcome.Pending;
+        markets[marketId].id = marketId;
+        markets[marketId].marketCreator = msg.sender;
+        markets[marketId].token = token;
+        markets[marketId].isResolved = false;
+        markets[marketId].outcome = Outcome.Pending;
 
         marketCount++;
         emit MarketCreated(marketId, msg.sender, token);

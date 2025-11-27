@@ -9,48 +9,40 @@ contract ResolveMarket is PlaceBet{
 
     constructor(address initialOwner) PlaceBet(initialOwner) {}
 
-    event MarketCancelled(uint256 indexed marketId, uint256 totalRefunds, address cancelledBy);
-    event BetRefunded(uint256 indexed marketId, address indexed bettor, uint256 amount);
+    event MarketCancelled(uint256 indexed marketId, address cancelledBy);
 
-    event MarketResolved(uint256 indexed marketId, Outcome outcome, uint256 totalPrizePool, uint256 winningBettors);
-    event PrizeDistributed(uint256 indexed marketId, address indexed bettor, uint256 betAmount, uint256 prizeAmount);
+    event MarketResolved(uint256 indexed marketId, Outcome outcome, uint256 indexed totalPrizePool);
 
     /**
      * @dev Cancel a market and refund all bets to bettors
      * @param marketId The ID of the market to cancel
      */
-
     function cancelAndRefundAll(uint256 marketId) external nonReentrant {
+        _cancelAndRefundAll(marketId);
+    }
+    
+    function _cancelAndRefundAll(uint256 marketId) private {
         require(marketId < marketCount, "Market does not exist");
         
         Market storage market = markets[marketId];
         
         require(!market.isResolved, "Market is already resolved");
-        require(
-            market.outcome == Outcome.Pending, 
-            "Market outcome already determined"
-        );
+        require( market.outcome == Outcome.Pending, "Market outcome already determined" );
 
         // Check if caller is either contract owner OR market creator
-        require(
-            msg.sender == owner() || msg.sender == market.marketCreator,
-            "Only smart contract owner or market creator can cancel"
-        );
+        require( msg.sender == owner() || msg.sender == market.marketCreator,"Only smart contract owner or market creator can cancel");
 
         // Mark market as resolved and cancelled
         market.isResolved = true;
         market.outcome = Outcome.Cancelled;
 
         IERC20Metadata erc20 = IERC20Metadata(market.token);
-        uint256 totalRefunded = 0;
 
         // Refund all YES bets
         for (uint256 i = 0; i < market.yesBets.length; i++) {
             Bet memory bet = market.yesBets[i];
             if (bet.amount > 0) {
                 erc20.safeTransfer(bet.bettor, bet.amount);
-                totalRefunded += bet.amount;
-                emit BetRefunded(marketId, bet.bettor, bet.amount);
             }
         }
 
@@ -59,12 +51,10 @@ contract ResolveMarket is PlaceBet{
             Bet memory bet = market.noBets[i];
             if (bet.amount > 0) {
                 erc20.safeTransfer(bet.bettor, bet.amount);
-                totalRefunded += bet.amount;
-                emit BetRefunded(marketId, bet.bettor, bet.amount);
             }
         }
 
-        emit MarketCancelled(marketId, totalRefunded, msg.sender);
+        emit MarketCancelled(marketId, msg.sender);
     }
 
       /**
@@ -72,14 +62,15 @@ contract ResolveMarket is PlaceBet{
      * @param marketId The ID of the market to resolve
      * @param outcome The outcome of the market (YesWon or NoWon)
      */
-    function resolvedFinalResult(uint256 marketId, Outcome outcome) external onlyOwner nonReentrant {
+    function executeFinalResult(uint256 marketId, Outcome outcome) external nonReentrant {
         require(marketId < marketCount, "Market does not exist");
         
         Market storage market = markets[marketId];
-        
+        require( msg.sender == owner() || msg.sender == market.marketCreator,"Only smart contract owner or market creator can resolve final result");
+
         require(!market.isResolved, "Market is already resolved");
-        require(outcome == Outcome.YesWon || outcome == Outcome.NoWon, "Invalid outcome for resolution");
         require(market.outcome == Outcome.Pending, "Market outcome already determined");
+        require(outcome == Outcome.YesWon || outcome == Outcome.NoWon, "Invalid input for market resolution");
 
         // Mark market as resolved
         market.isResolved = true;
@@ -97,34 +88,28 @@ contract ResolveMarket is PlaceBet{
         uint256 totalPrizePool = totalWinningPool + totalLosingPool;
 
         // If there are no winning bets, refund all (edge case)
-        if (winningBets.length == 0) {
-            _refundAllBets(marketId, market.yesBets, erc20);
-            _refundAllBets(marketId, market.noBets, erc20);
-            emit MarketResolved(marketId, outcome, totalPrizePool, 0);
+        if (winningBets.length == 0 || losingBets.length == 0) {
+            _cancelAndRefundAll(marketId);
             return;
         }
 
         // Distribute prizes to winners based on their stake proportion
-        uint256 winningBettorsCount = 0;
-        
+
         for (uint256 i = 0; i < winningBets.length; i++) {
             Bet memory winningBet = winningBets[i];
             
-            if (winningBet.amount > 0) {
                 // Calculate winner's share of the total prize pool
                 // prize = original bet + (betAmount / totalWinningPool) * totalLosingPool
-                uint256 prizeAmount = winningBet.amount + 
-                    (winningBet.amount * totalLosingPool) / totalWinningPool;
-                
+
+                // Calculate prize using mulDiv pattern to avoid overflow
+                uint256 winningShare = (winningBet.amount * totalLosingPool) / totalWinningPool;
+                uint256 prizeAmount = winningBet.amount + winningShare;
+                        
                 // Transfer prize to winner
                 erc20.safeTransfer(winningBet.bettor, prizeAmount);
-                winningBettorsCount++;
-                
-                emit PrizeDistributed(marketId, winningBet.bettor, winningBet.amount, prizeAmount);
-            }
         }
 
-        emit MarketResolved(marketId, outcome, totalPrizePool, winningBettorsCount);
+        emit MarketResolved(marketId, outcome, totalPrizePool);
     }
 
     /**
@@ -132,7 +117,7 @@ contract ResolveMarket is PlaceBet{
      * @param bets Array of bets to calculate total for
      * @return total Total amount in the bets array
      */
-    function _calculateTotalPool(Bet[] storage bets) internal view returns (uint256 total) {
+    function _calculateTotalPool(Bet[] storage bets) private view returns (uint256 total) {
         for (uint256 i = 0; i < bets.length; i++) {
             total += bets[i].amount;
         }
@@ -145,13 +130,4 @@ contract ResolveMarket is PlaceBet{
      * @param bets Array of bets to refund
      * @param erc20 The token contract
      */
-    function _refundAllBets(uint256 marketId, Bet[] storage bets, IERC20Metadata erc20) internal {
-        for (uint256 i = 0; i < bets.length; i++) {
-            Bet memory bet = bets[i];
-            if (bet.amount > 0) {
-                erc20.safeTransfer(bet.bettor, bet.amount);
-                emit BetRefunded(marketId, bet.bettor, bet.amount);
-            }
-        }
-    }
 }
